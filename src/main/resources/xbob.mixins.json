@@ -11,6 +11,8 @@
         "HeldItemRendererAccessor",
         "GameRendererMixin",
         "GameRendererAccessor",
-        "CameraAccessor"
+        "CameraAccessor",
+        "CustomFramebufferRendererMixin",
+        "DynamicCrosshairWrapRenderMixin"
     ]
 }
