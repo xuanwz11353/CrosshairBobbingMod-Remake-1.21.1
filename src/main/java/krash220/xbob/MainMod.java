@@ -2,7 +2,11 @@ package krash220.xbob;
 
 import java.util.function.Function;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
+
 import krash220.xbob.game.api.Config;
+import krash220.xbob.game.api.DynamicCrosshairCompat;
 import krash220.xbob.game.api.Loader;
 import krash220.xbob.game.api.Logger;
 import krash220.xbob.game.api.Player;
@@ -41,6 +45,13 @@ public class MainMod {
     private float attackAnimScale;
     private float attackDamage;
 
+    private static boolean bobActive;
+    private static float bobOffsetX;
+    private static float bobOffsetY;
+    private static float bobAngle;
+    private static float bobScale;
+    private static float bobScaleBow;
+
     public MainMod() {
         Logger.info("Hello, Crosshair Bobbing!");
         Logger.info("Platform: {}, Minecraft: {}, isClient: {}", Loader.getPlatform(), Loader.getVersion(), Loader.isClient());
@@ -63,6 +74,8 @@ public class MainMod {
 
     public void preRenderCrossHair(MatrixStack mat, float partialTicks) {
         mat.push();
+
+        bobActive = false;
 
         if (!Render.isDebugCrosshair()) {
             this.matrix.identity();
@@ -158,6 +171,17 @@ public class MainMod {
             offsetX *= Render.getScaledWidth() * 0.5;
             offsetY *= Render.getScaledHeight() * 0.5;
 
+            bobOffsetX = offsetX;
+            bobOffsetY = offsetY;
+            bobAngle = angle;
+            bobScale = scale;
+            bobScaleBow = scaleBow;
+            bobActive = true;
+
+            if (DynamicCrosshairCompat.shouldHandleCrosshair()) {
+                return;
+            }
+
             mat.translate(Render.getScaledWidth() * 0.5, Render.getScaledHeight() * 0.5, 0.0);
             mat.translate(offsetX, -offsetY, 0.0);
             mat.rotate(angle, 0.0f, 0.0f, 1.0f);
@@ -165,6 +189,26 @@ public class MainMod {
             mat.scale(1.0f, scaleBow, 1.0f);
             mat.translate(-Render.getScaledWidth() * 0.5, -Render.getScaledHeight() * 0.5, 0.0);
         }
+    }
+
+    public static void preDynamicCrosshair(PoseStack pose) {
+        pose.pushPose();
+
+        if (bobActive) {
+            float cx = Render.getScaledWidth() * 0.5f;
+            float cy = Render.getScaledHeight() * 0.5f;
+
+            pose.translate(cx, cy, 0.0);
+            pose.translate(bobOffsetX, -bobOffsetY, 0.0);
+            pose.mulPose(Axis.ZP.rotationDegrees(bobAngle));
+            pose.scale(bobScale, bobScale, bobScale);
+            pose.scale(1.0f, bobScaleBow, 1.0f);
+            pose.translate(-cx, -cy, 0.0);
+        }
+    }
+
+    public static void postDynamicCrosshair(PoseStack pose) {
+        pose.popPose();
     }
 
     public void postRenderCrossHair(MatrixStack mat, float partialTicks) {

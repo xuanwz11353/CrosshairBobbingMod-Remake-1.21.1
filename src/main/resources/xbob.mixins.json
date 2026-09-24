@@ -5,7 +5,10 @@
     "compatibilityLevel": "JAVA_21",
     "client": [
         "CameraAccessor",
+        "CustomFramebufferRendererMixin",
+        "DynamicCrosshairRendererMixin",
         "GameRendererAccessor",
+        "GuiMixin",
         "ItemInHandRendererAccessor",
         "LivingEntityAccessor",
         "LivingEntityMixin",
