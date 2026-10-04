@@ -286,5 +286,8 @@
       "total": 5
     }
   },
-  "updated": "2026-10-04T13:24:39.470Z"
+  "updated": "2026-10-04T13:26:27.897Z",
+  "sources": {
+    "curseforge": "cfwidget"
+  }
 }
