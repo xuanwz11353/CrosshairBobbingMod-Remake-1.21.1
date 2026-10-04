@@ -273,21 +273,21 @@
   },
   "totals": {
     "modrinth": 88,
-    "curseforge": 108,
+    "curseforge": 72,
     "github": 5
   },
   "snapshots": {
     "curseforge": {
       "date": "2026-10-04",
-      "total": 108
+      "total": 72
     },
     "github": {
       "date": "2026-10-04",
       "total": 5
     }
   },
-  "updated": "2026-10-04T13:26:27.897Z",
+  "updated": "2026-10-04T13:35:45.263Z",
   "sources": {
-    "curseforge": "cfwidget"
+    "curseforge": "cfmirror"
   }
 }
