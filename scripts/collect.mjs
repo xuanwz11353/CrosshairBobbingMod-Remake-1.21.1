@@ -59,6 +59,19 @@ async function modrinthTotal() {
 }
 
 async function curseforgeTotal() {
+  try {
+    const res = await fetch(`https://mod.mcimirror.top/curseforge/v1/mods/${CONFIG.curseforgeModId}`, {
+      headers: { 'User-Agent': UA, Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const j = await res.json();
+      return { total: j.data.downloadCount, source: 'cfmirror' };
+    }
+    console.error(`CurseForge mirror ${res.status}`);
+  } catch (e) {
+    console.error('CurseForge mirror error:', e.message);
+  }
+
   if (CURSEFORGE_API_KEY) {
     try {
       const res = await fetch(`https://api.curseforge.com/v1/mods/${CONFIG.curseforgeModId}`, {
@@ -73,6 +86,7 @@ async function curseforgeTotal() {
       console.error('CurseForge Core API error, falling back to cfwidget:', e.message);
     }
   }
+
   const res = await fetch(`https://api.cfwidget.com/minecraft/mc-mods/${CONFIG.curseforgeSlug}`, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`cfwidget ${res.status}`);
   const j = await res.json();
