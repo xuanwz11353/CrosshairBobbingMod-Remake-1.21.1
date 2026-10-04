@@ -45,7 +45,7 @@
 
   <div class="grid two">
     <div class="chart-container"><h2>每日访问量（Modrinth）</h2><div class="chart-box"><canvas id="chViews"></canvas></div></div>
-    <div class="chart-container"><h2>按加载器（未知为启动器下载）</h2><div class="chart-box"><canvas id="chLoaders"></canvas></div></div>
+    <div class="chart-container"><h2>按加载器（Modrinth+Github）</h2><div class="chart-box"><canvas id="chLoaders"></canvas></div></div>
   </div>
 
   <div class="grid">
@@ -94,7 +94,7 @@
 
       const bd = data.breakdown || { loaders: {}, versions: [] };
       const lk = ['fabric', 'neoforge', 'unknown'].filter((k) => (bd.loaders[k] || 0) > 0);
-      const lkNames = { fabric: 'Fabric', neoforge: 'NeoForge', unknown: '未知' };
+      const lkNames = { fabric: 'Fabric', neoforge: 'NeoForge', unknown: '未知（启动器下载）' };
       const lkColors = { fabric: '#dbb69b', neoforge: '#f6b26b', unknown: '#6e7681' };
       new Chart(document.getElementById('chLoaders'), {
         type: 'doughnut',
