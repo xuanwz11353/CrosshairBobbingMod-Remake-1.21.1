@@ -3,6 +3,7 @@ import fs from 'node:fs';
 const CONFIG = {
   modrinthProjectId: 'WVhTwkpD',
   curseforgeSlug: 'crosshairbobbingmod',
+  curseforgeModId: 1673018,
   githubRepo: 'xuanwz11353/CrosshairBobbingMod-Remake-1.21.1',
   historyDays: 90,
   keepDays: 180,
@@ -10,6 +11,7 @@ const CONFIG = {
 };
 
 const MODRINTH_TOKEN = process.env.MODRINTH_TOKEN || '';
+const CURSEFORGE_API_KEY = process.env.CURSEFORGE_API_KEY || '';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const UA = 'CrosshairBobbingMod-Stats/1.0';
 
@@ -57,6 +59,20 @@ async function modrinthTotal() {
 }
 
 async function curseforgeTotal() {
+  if (CURSEFORGE_API_KEY) {
+    try {
+      const res = await fetch(`https://api.curseforge.com/v1/mods/${CONFIG.curseforgeModId}`, {
+        headers: { 'x-api-key': CURSEFORGE_API_KEY, Accept: 'application/json', 'User-Agent': UA },
+      });
+      if (res.ok) {
+        const j = await res.json();
+        return j.data.downloadCount;
+      }
+      console.error(`CurseForge Core API ${res.status}, falling back to cfwidget`);
+    } catch (e) {
+      console.error('CurseForge Core API error, falling back to cfwidget:', e.message);
+    }
+  }
   const res = await fetch(`https://api.cfwidget.com/minecraft/mc-mods/${CONFIG.curseforgeSlug}`, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`cfwidget ${res.status}`);
   const j = await res.json();
