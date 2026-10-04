@@ -66,7 +66,7 @@ async function curseforgeTotal() {
       });
       if (res.ok) {
         const j = await res.json();
-        return j.data.downloadCount;
+        return { total: j.data.downloadCount, source: 'curseforge-api' };
       }
       console.error(`CurseForge Core API ${res.status}, falling back to cfwidget`);
     } catch (e) {
@@ -76,7 +76,7 @@ async function curseforgeTotal() {
   const res = await fetch(`https://api.cfwidget.com/minecraft/mc-mods/${CONFIG.curseforgeSlug}`, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`cfwidget ${res.status}`);
   const j = await res.json();
-  return j.downloads.total;
+  return { total: j.downloads.total, source: 'cfwidget' };
 }
 
 async function githubTotal() {
@@ -121,7 +121,7 @@ async function main() {
   data.snapshots = data.snapshots || {};
   const today = dayStr(new Date());
 
-  const [mTotal, fTotal, gTotal, mDaily] = await Promise.all([
+  const [mTotal, fRes, gTotal, mDaily] = await Promise.all([
     modrinthTotal().catch((e) => (console.error(e.message), null)),
     curseforgeTotal().catch((e) => (console.error(e.message), null)),
     githubTotal().catch((e) => (console.error(e.message), null)),
@@ -129,7 +129,11 @@ async function main() {
   ]);
 
   if (mTotal != null) data.totals.modrinth = mTotal;
-  if (fTotal != null) snapshot(data, 'curseforge', fTotal, today);
+  if (fRes != null) {
+    data.sources = data.sources || {};
+    data.sources.curseforge = fRes.source;
+    snapshot(data, 'curseforge', fRes.total, today);
+  }
   if (gTotal != null) snapshot(data, 'github', gTotal, today);
   if (mDaily) {
     for (const [d, v] of Object.entries(mDaily)) {
