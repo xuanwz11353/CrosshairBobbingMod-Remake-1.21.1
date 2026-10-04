@@ -1,3 +1,5 @@
+process.env.TZ = 'Asia/Shanghai';
+
 import fs from 'node:fs';
 
 const CONFIG = {
@@ -14,40 +16,64 @@ const MODRINTH_TOKEN = process.env.MODRINTH_TOKEN || '';
 const CURSEFORGE_API_KEY = process.env.CURSEFORGE_API_KEY || '';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const UA = 'CrosshairBobbingMod-Stats/1.0';
+const ANALYTICS = 'https://api.modrinth.com/v3/analytics';
+const ALL_TIME_START = '2024-01-01T00:00:00Z';
 
-const dayStr = (d) => d.toISOString().slice(0, 10);
-const addDays = (s, n) => {
+const pad = (n) => String(n).padStart(2, '0');
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function addDays(s, n) {
   const d = new Date(s + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + n);
-  return dayStr(d);
-};
+  return d.toISOString().slice(0, 10);
+}
+function beijingMidnightUTC(dateStr) {
+  return new Date(dateStr + 'T00:00:00+08:00').toISOString();
+}
 
-async function modrinthDaily() {
+async function analytics(metrics, { daily = false } = {}) {
   if (!MODRINTH_TOKEN) {
-    console.error('MODRINTH_TOKEN missing, skip daily analytics');
+    console.error('MODRINTH_TOKEN missing');
     return null;
   }
-  const end = addDays(dayStr(new Date()), 1);
-  const start = addDays(end, -CONFIG.historyDays);
-  const res = await fetch('https://api.modrinth.com/v3/analytics', {
+  let time_range, slices;
+  if (daily) {
+    const endDate = addDays(localToday(), 1);
+    const startDate = addDays(endDate, -CONFIG.historyDays);
+    time_range = { start: beijingMidnightUTC(startDate), end: beijingMidnightUTC(endDate) };
+    slices = CONFIG.historyDays;
+  } else {
+    time_range = { start: ALL_TIME_START, end: new Date().toISOString() };
+    slices = 1;
+  }
+  const res = await fetch(ANALYTICS, {
     method: 'POST',
     headers: { Authorization: `Bearer ${MODRINTH_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      time_range: { start: `${start}T00:00:00Z`, end: `${end}T00:00:00Z`, resolution: { slices: CONFIG.historyDays } },
-      return_metrics: { project_downloads: { bucket_by: ['project_id'] } },
-    }),
+    body: JSON.stringify({ time_range: { ...time_range, resolution: { slices } }, return_metrics: metrics }),
   });
   if (!res.ok) {
-    console.error('Modrinth analytics failed:', res.status, await res.text());
+    console.error('Modrinth analytics', res.status, (await res.text()).slice(0, 200));
     return null;
   }
-  const json = await res.json();
+  return res.json();
+}
+
+async function modrinthDaily() {
+  const json = await analytics({ project_downloads: { bucket_by: ['project_id'] }, project_views: {} }, { daily: true });
+  if (!json) return null;
+  const endDate = addDays(localToday(), 1);
+  const startDate = addDays(endDate, -CONFIG.historyDays);
   const out = {};
   (json.metrics || []).forEach((bucket, i) => {
-    const date = addDays(start, i);
-    let v = 0;
-    for (const m of bucket) if (m.source_project === CONFIG.modrinthProjectId) v = m.downloads || 0;
-    out[date] = v;
+    const date = addDays(startDate, i);
+    let downloads = 0, views = 0;
+    for (const m of bucket) {
+      if (m.metric_kind === 'downloads' && (!m.source_project || m.source_project === CONFIG.modrinthProjectId)) downloads += m.downloads || 0;
+      if (m.metric_kind === 'views') views += m.views || 0;
+    }
+    out[date] = { downloads, views };
   });
   return out;
 }
@@ -58,18 +84,79 @@ async function modrinthTotal() {
   return (await res.json()).downloads;
 }
 
+async function modrinthViewsTotal() {
+  const json = await analytics({ project_views: {} });
+  if (!json) return null;
+  let total = 0;
+  for (const bucket of json.metrics || []) for (const m of bucket) if (m.metric_kind === 'views') total += m.views || 0;
+  return total;
+}
+
+async function modrinthBreakdowns() {
+  const [loadersJson, versionsJson, meta] = await Promise.all([
+    analytics({ project_downloads: { bucket_by: ['loader'] } }),
+    analytics({ project_downloads: { bucket_by: ['version_id'] } }),
+    fetch(`https://api.modrinth.com/v2/project/${CONFIG.modrinthProjectId}/version`).then((r) => (r.ok ? r.json() : [])),
+  ]);
+  const loaders = { fabric: 0, neoforge: 0, unknown: 0 };
+  if (loadersJson) {
+    for (const bucket of loadersJson.metrics || []) for (const m of bucket) {
+      if (m.metric_kind !== 'downloads') continue;
+      const key = m.loader === 'fabric' ? 'fabric' : m.loader === 'neoforge' ? 'neoforge' : 'unknown';
+      loaders[key] += m.downloads || 0;
+    }
+  }
+  const versionMap = {};
+  if (versionsJson) {
+    for (const bucket of versionsJson.metrics || []) for (const m of bucket) {
+      if (m.metric_kind !== 'downloads' || !m.version_id) continue;
+      versionMap[m.version_id] = (versionMap[m.version_id] || 0) + (m.downloads || 0);
+    }
+  }
+  const versions = (meta || []).map((v) => ({ name: v.version_number, platform: 'modrinth', loaders: v.loaders, downloads: versionMap[v.id] || 0 }));
+  return { loaders, versions };
+}
+
+async function githubData() {
+  let total = 0;
+  const loaders = { fabric: 0, neoforge: 0, unknown: 0 };
+  const versions = [];
+  let page = 1;
+  const headers = { 'User-Agent': UA, Accept: 'application/vnd.github+json' };
+  if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+  while (true) {
+    const res = await fetch(`https://api.github.com/repos/${CONFIG.githubRepo}/releases?per_page=100&page=${page}`, { headers });
+    if (!res.ok) throw new Error(`github ${res.status}`);
+    const releases = await res.json();
+    if (!Array.isArray(releases) || releases.length === 0) break;
+    for (const r of releases) {
+      let relTotal = 0;
+      for (const a of r.assets || []) {
+        const c = a.download_count || 0;
+        relTotal += c;
+        total += c;
+        const name = `${a.name} ${r.tag_name}`.toLowerCase();
+        const key = name.includes('neoforge') ? 'neoforge' : name.includes('fabric') ? 'fabric' : 'unknown';
+        loaders[key] += c;
+      }
+      versions.push({ name: r.tag_name, platform: 'github', downloads: relTotal });
+    }
+    if (releases.length < 100) break;
+    page++;
+  }
+  return { total, loaders, versions };
+}
+
 async function curseforgeTotal() {
   try {
-    const res = await fetch(`https://mod.mcimirror.top/curseforge/v1/mods/${CONFIG.curseforgeModId}`, {
-      headers: { 'User-Agent': UA, Accept: 'application/json' },
-    });
+    const res = await fetch(`https://api.cfwidget.com/minecraft/mc-mods/${CONFIG.curseforgeSlug}`, { headers: { 'User-Agent': UA } });
     if (res.ok) {
       const j = await res.json();
-      return { total: j.data.downloadCount, source: 'cfmirror' };
+      return { total: j.downloads.total, source: 'cfwidget' };
     }
-    console.error(`CurseForge mirror ${res.status}`);
+    console.error(`cfwidget ${res.status}`);
   } catch (e) {
-    console.error('CurseForge mirror error:', e.message);
+    console.error('cfwidget error:', e.message);
   }
 
   if (CURSEFORGE_API_KEY) {
@@ -81,33 +168,18 @@ async function curseforgeTotal() {
         const j = await res.json();
         return { total: j.data.downloadCount, source: 'curseforge-api' };
       }
-      console.error(`CurseForge Core API ${res.status}, falling back to cfwidget`);
+      console.error(`CurseForge Core API ${res.status}`);
     } catch (e) {
-      console.error('CurseForge Core API error, falling back to cfwidget:', e.message);
+      console.error('CurseForge Core API error:', e.message);
     }
   }
 
-  const res = await fetch(`https://api.cfwidget.com/minecraft/mc-mods/${CONFIG.curseforgeSlug}`, { headers: { 'User-Agent': UA } });
-  if (!res.ok) throw new Error(`cfwidget ${res.status}`);
+  const res = await fetch(`https://mod.mcimirror.top/curseforge/v1/mods/${CONFIG.curseforgeModId}`, {
+    headers: { 'User-Agent': UA, Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`cfmirror ${res.status}`);
   const j = await res.json();
-  return { total: j.downloads.total, source: 'cfwidget' };
-}
-
-async function githubTotal() {
-  let total = 0;
-  let page = 1;
-  const headers = { 'User-Agent': UA, Accept: 'application/vnd.github+json' };
-  if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
-  while (true) {
-    const res = await fetch(`https://api.github.com/repos/${CONFIG.githubRepo}/releases?per_page=100&page=${page}`, { headers });
-    if (!res.ok) throw new Error(`github ${res.status}`);
-    const releases = await res.json();
-    if (!Array.isArray(releases) || releases.length === 0) break;
-    for (const r of releases) for (const a of (r.assets || [])) total += a.download_count || 0;
-    if (releases.length < 100) break;
-    page++;
-  }
-  return total;
+  return { total: j.data.downloadCount, source: 'cfmirror' };
 }
 
 function load() {
@@ -133,27 +205,40 @@ async function main() {
   data.daily = data.daily || {};
   data.totals = data.totals || {};
   data.snapshots = data.snapshots || {};
-  const today = dayStr(new Date());
+  data.sources = data.sources || {};
+  const today = localToday();
 
-  const [mTotal, fRes, gTotal, mDaily] = await Promise.all([
+  const [mTotal, cfRes, gh, mDaily, mViews, mBreak] = await Promise.all([
     modrinthTotal().catch((e) => (console.error(e.message), null)),
     curseforgeTotal().catch((e) => (console.error(e.message), null)),
-    githubTotal().catch((e) => (console.error(e.message), null)),
+    githubData().catch((e) => (console.error(e.message), null)),
     modrinthDaily().catch((e) => (console.error(e.message), null)),
+    modrinthViewsTotal().catch((e) => (console.error(e.message), null)),
+    modrinthBreakdowns().catch((e) => (console.error(e.message), null)),
   ]);
 
   if (mTotal != null) data.totals.modrinth = mTotal;
-  if (fRes != null) {
-    data.sources = data.sources || {};
-    data.sources.curseforge = fRes.source;
-    snapshot(data, 'curseforge', fRes.total, today);
+  if (mViews != null) data.totals.views = mViews;
+  if (cfRes != null) {
+    data.sources.curseforge = cfRes.source;
+    snapshot(data, 'curseforge', cfRes.total, today);
   }
-  if (gTotal != null) snapshot(data, 'github', gTotal, today);
+  if (gh) snapshot(data, 'github', gh.total, today);
   if (mDaily) {
     for (const [d, v] of Object.entries(mDaily)) {
       data.daily[d] = data.daily[d] || {};
-      data.daily[d].modrinth = v;
+      data.daily[d].modrinth = v.downloads;
+      data.daily[d].views = v.views;
     }
+  }
+
+  if (mBreak || gh) {
+    const loaders = { fabric: 0, neoforge: 0, unknown: 0 };
+    if (mBreak) for (const k of Object.keys(loaders)) loaders[k] += mBreak.loaders[k] || 0;
+    if (gh) for (const k of Object.keys(loaders)) loaders[k] += gh.loaders[k] || 0;
+    const versions = [...(mBreak ? mBreak.versions : []), ...(gh ? gh.versions : [])];
+    versions.sort((a, b) => b.downloads - a.downloads);
+    data.breakdown = { loaders, versions };
   }
 
   data.updated = new Date().toISOString();
@@ -163,7 +248,7 @@ async function main() {
   }
 
   fs.writeFileSync(CONFIG.dataFile, JSON.stringify(data, null, 2));
-  console.log('OK', JSON.stringify(data.totals));
+  console.log('OK', JSON.stringify(data.totals), 'cf=' + data.sources.curseforge);
 }
 
 main().catch((e) => {
